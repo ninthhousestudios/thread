@@ -18,12 +18,15 @@ class GraphCard extends StatefulWidget {
 
 class _GraphCardState extends State<GraphCard> {
   String? _hoveredNodeId;
-  Offset? _hoverPosition;
+  OverlayEntry? _tooltipEntry;
   final _transformController = TransformationController();
+  final _canvasKey = GlobalKey();
   bool _didCenter = false;
+  List<PositionedNode> _centeredNodes = [];
 
   @override
   void dispose() {
+    _removeTooltip();
     _transformController.dispose();
     super.dispose();
   }
@@ -38,26 +41,89 @@ class _GraphCardState extends State<GraphCard> {
   }
 
   void _handleHover(PointerHoverEvent event) {
-    final matrix = _transformController.value;
-    final inverseMatrix = Matrix4.inverted(matrix);
-    final scenePoint = MatrixUtils.transformPoint(
-      inverseMatrix,
-      event.localPosition,
-    );
+    // localPosition is in canvas space (MouseRegion is inside InteractiveViewer)
+    final canvasPoint = event.localPosition;
 
     String? hit;
-    for (final n in widget.layout) {
-      if ((scenePoint - n.position).distance <= n.radius) {
+    PositionedNode? hitNode;
+    for (final n in _centeredNodes) {
+      if ((canvasPoint - n.position).distance <= n.radius) {
         hit = n.node.id;
+        hitNode = n;
         break;
       }
     }
+
     if (hit != _hoveredNodeId) {
-      setState(() {
-        _hoveredNodeId = hit;
-        _hoverPosition = hit != null ? event.localPosition : null;
-      });
+      _hoveredNodeId = hit;
+      _removeTooltip();
+      if (hit != null && hitNode != null) {
+        _showTooltip(event.position, hitNode.node);
+      }
+      setState(() {});
     }
+  }
+
+  void _showTooltip(Offset screenPosition, ComponentNode node) {
+    final degree = widget.graph.edges
+        .where((e) => e.sourceId == node.id || e.targetId == node.id)
+        .length;
+
+    _tooltipEntry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: screenPosition.dx + 16,
+        top: screenPosition.dy - 10,
+        child: IgnorePointer(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    node.name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  _tooltipRow(
+                    'Health',
+                    '${node.healthScore.toStringAsFixed(1)} / 10',
+                    color: healthColor(node.healthScore),
+                  ),
+                  _tooltipRow('Files', '${node.fileCount}'),
+                  _tooltipRow('Lines', _formatNumber(node.lineCount)),
+                  _tooltipRow('Connections', '$degree'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_tooltipEntry!);
+  }
+
+  void _removeTooltip() {
+    _tooltipEntry?.remove();
+    _tooltipEntry?.dispose();
+    _tooltipEntry = null;
+  }
+
+  void _handleExit(PointerExitEvent _) {
+    _hoveredNodeId = null;
+    _removeTooltip();
+    setState(() {});
   }
 
   @override
@@ -75,13 +141,12 @@ class _GraphCardState extends State<GraphCard> {
       builder: (context, constraints) {
         final viewportSize = Size(constraints.maxWidth, constraints.maxHeight);
 
-        // Canvas = 3x viewport so there's room to pan in all directions
         final canvasSize = Size(
           viewportSize.width * 3,
           viewportSize.height * 3,
         );
 
-        // Compute offset to center the laid-out graph within the canvas
+        // Center the graph within the oversized canvas
         var minX = double.infinity, minY = double.infinity;
         var maxX = double.negativeInfinity, maxY = double.negativeInfinity;
         for (final n in widget.layout) {
@@ -104,7 +169,7 @@ class _GraphCardState extends State<GraphCard> {
         final offsetY = (canvasSize.height - graphH) / 2 - minY;
         final centerOffset = Offset(offsetX, offsetY);
 
-        final centeredNodes = [
+        _centeredNodes = [
           for (final n in widget.layout)
             PositionedNode(
               node: n.node,
@@ -117,84 +182,27 @@ class _GraphCardState extends State<GraphCard> {
           _centerOnGraph(viewportSize, canvasSize);
         });
 
-        return MouseRegion(
-          onHover: _handleHover,
-          onExit: (_) => setState(() {
-            _hoveredNodeId = null;
-            _hoverPosition = null;
-          }),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              InteractiveViewer(
-                transformationController: _transformController,
-                boundaryMargin: const EdgeInsets.all(double.infinity),
-                minScale: 0.3,
-                maxScale: 3.0,
-                constrained: false,
-                child: CustomPaint(
-                  painter: GraphPainter(
-                    nodes: centeredNodes,
-                    edges: widget.graph.edges,
-                    hoveredNodeId: _hoveredNodeId,
-                  ),
-                  size: canvasSize,
-                ),
+        return InteractiveViewer(
+          transformationController: _transformController,
+          boundaryMargin: const EdgeInsets.all(double.infinity),
+          minScale: 0.3,
+          maxScale: 3.0,
+          constrained: false,
+          child: MouseRegion(
+            key: _canvasKey,
+            onHover: _handleHover,
+            onExit: _handleExit,
+            child: CustomPaint(
+              painter: GraphPainter(
+                nodes: _centeredNodes,
+                edges: widget.graph.edges,
+                hoveredNodeId: _hoveredNodeId,
               ),
-              if (_hoveredNodeId != null && _hoverPosition != null)
-                _buildTooltip(),
-            ],
+              size: canvasSize,
+            ),
           ),
         );
       },
-    );
-  }
-
-  Widget _buildTooltip() {
-    final node = widget.layout
-        .firstWhere((n) => n.node.id == _hoveredNodeId)
-        .node;
-
-    final degree = widget.graph.edges
-        .where((e) => e.sourceId == node.id || e.targetId == node.id)
-        .length;
-
-    return Positioned(
-      left: _hoverPosition!.dx + 16,
-      top: _hoverPosition!.dy - 10,
-      child: IgnorePointer(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: cardBg,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                node.name,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 4),
-              _tooltipRow(
-                'Health',
-                '${node.healthScore.toStringAsFixed(1)} / 10',
-                color: healthColor(node.healthScore),
-              ),
-              _tooltipRow('Files', '${node.fileCount}'),
-              _tooltipRow('Lines', _formatNumber(node.lineCount)),
-              _tooltipRow('Connections', '$degree'),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
