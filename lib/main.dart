@@ -4,9 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'data/db_connection.dart';
+import 'data/graph_model.dart';
 import 'data/models.dart';
 import 'data/workspace_scanner.dart';
+import 'layout/force_directed.dart';
+import 'layout/layout_engine.dart';
 import 'ui/draggable_card.dart';
+import 'ui/graph_card.dart';
 import 'ui/theme.dart';
 import 'ui/workspace_picker.dart';
 import 'ui/workspace_stats.dart';
@@ -62,6 +66,8 @@ class _ThreadHomeState extends State<_ThreadHome> {
   List<WorkspaceInfo> _workspaces = [];
   WorkspaceInfo? _activeWorkspace;
   WorkspaceStats? _stats;
+  ComponentGraph? _graph;
+  List<PositionedNode>? _graphLayout;
   bool _showStats = false;
   bool _showPicker = false;
   final _db = DbConnection();
@@ -99,9 +105,13 @@ class _ThreadHomeState extends State<_ThreadHome> {
 
   void _selectWorkspace(WorkspaceInfo ws) {
     _db.open(ws.dbPath);
+    final graph = buildComponentGraph(_db);
+    final layout = ForceDirectedLayout().layout(graph, const Size(1200, 800));
     setState(() {
       _activeWorkspace = ws;
       _stats = _db.queryStats(ws.name);
+      _graph = graph;
+      _graphLayout = layout;
       _showStats = true;
       _showPicker = false;
     });
@@ -267,6 +277,14 @@ class _ThreadHomeState extends State<_ThreadHome> {
                     ).copyWith(textScaler: TextScaler.linear(_zoom)),
                     child: Stack(
                       children: [
+                        if (_graph != null && _graphLayout != null)
+                          Positioned.fill(
+                            child: GraphCard(
+                              key: ValueKey('graph-${_activeWorkspace?.name}'),
+                              graph: _graph!,
+                              layout: _graphLayout!,
+                            ),
+                          ),
                         if (_showStats && _stats != null)
                           DraggableCard(
                             key: ValueKey('stats-${_activeWorkspace!.name}'),
