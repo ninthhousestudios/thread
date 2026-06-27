@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'theme.dart';
 
@@ -72,26 +71,21 @@ class _DraggableCardState extends State<DraggableCard> {
     return Positioned(
       left: _offset.dx,
       top: _offset.dy,
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: (event) {
-          if (event.buttons == kSecondaryMouseButton) {
-            _showCardMenu(event.position);
-          }
+      child: GestureDetector(
+        onSecondaryTapUp: (details) {
+          _showCardMenu(details.globalPosition);
         },
-        child: GestureDetector(
-          onPanUpdate: (details) {
-            setState(() {
-              _offset += details.delta;
-            });
-          },
-          child: Container(
-            constraints: BoxConstraints(maxWidth: widget.maxWidth),
-            decoration: cardDecoration(),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(cardBorderRadius),
-              child: widget.child,
-            ),
+        onPanUpdate: (details) {
+          setState(() {
+            _offset += details.delta;
+          });
+        },
+        child: Container(
+          constraints: BoxConstraints(maxWidth: widget.maxWidth),
+          decoration: cardDecoration(),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(cardBorderRadius),
+            child: widget.child,
           ),
         ),
       ),

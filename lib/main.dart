@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
@@ -253,12 +252,10 @@ class _ThreadHomeState extends State<_ThreadHome> {
         child: Focus(
           autofocus: true,
           child: Scaffold(
-            body: Listener(
+            body: GestureDetector(
               behavior: HitTestBehavior.translucent,
-              onPointerDown: (event) {
-                if (event.buttons == kSecondaryMouseButton) {
-                  _showContextMenu(event.position);
-                }
+              onSecondaryTapUp: (details) {
+                _showContextMenu(details.globalPosition);
               },
               child: Stack(
                 fit: StackFit.expand,
