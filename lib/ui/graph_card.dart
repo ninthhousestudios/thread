@@ -19,13 +19,35 @@ class GraphCard extends StatefulWidget {
 class _GraphCardState extends State<GraphCard> {
   String? _hoveredNodeId;
   Offset? _hoverPosition;
+  final _transformController = TransformationController();
+  bool _didCenter = false;
 
-  void _handleHover(PointerHoverEvent event, Offset canvasOffset) {
-    final local = event.localPosition;
+  @override
+  void dispose() {
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  void _centerOnGraph(Size viewportSize, Size canvasSize) {
+    if (_didCenter) return;
+    _didCenter = true;
+    final dx = (canvasSize.width - viewportSize.width) / 2;
+    final dy = (canvasSize.height - viewportSize.height) / 2;
+    _transformController.value = Matrix4.identity()
+      ..translateByDouble(-dx, -dy, 0, 1);
+  }
+
+  void _handleHover(PointerHoverEvent event) {
+    final matrix = _transformController.value;
+    final inverseMatrix = Matrix4.inverted(matrix);
+    final scenePoint = MatrixUtils.transformPoint(
+      inverseMatrix,
+      event.localPosition,
+    );
+
     String? hit;
     for (final n in widget.layout) {
-      final adjusted = n.position + canvasOffset;
-      if ((local - adjusted).distance <= n.radius) {
+      if ((scenePoint - n.position).distance <= n.radius) {
         hit = n.node.id;
         break;
       }
@@ -49,42 +71,82 @@ class _GraphCardState extends State<GraphCard> {
       );
     }
 
-    // Compute canvas bounds from laid-out nodes
-    var maxX = 0.0, maxY = 0.0;
-    for (final n in widget.layout) {
-      final right = n.position.dx + n.radius + 60;
-      final bottom = n.position.dy + n.radius + 40;
-      if (right > maxX) maxX = right;
-      if (bottom > maxY) maxY = bottom;
-    }
-    final canvasSize = Size(maxX, maxY);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportSize = Size(constraints.maxWidth, constraints.maxHeight);
 
-    return InteractiveViewer(
-      boundaryMargin: const EdgeInsets.all(200),
-      minScale: 0.3,
-      maxScale: 3.0,
-      constrained: false,
-      child: MouseRegion(
-        onHover: (event) => _handleHover(event, Offset.zero),
-        onExit: (_) => setState(() {
-          _hoveredNodeId = null;
-          _hoverPosition = null;
-        }),
-        child: Stack(
-          children: [
-            CustomPaint(
-              painter: GraphPainter(
-                nodes: widget.layout,
-                edges: widget.graph.edges,
-                hoveredNodeId: _hoveredNodeId,
-              ),
-              size: canvasSize,
+        // Canvas = 3x viewport so there's room to pan in all directions
+        final canvasSize = Size(
+          viewportSize.width * 3,
+          viewportSize.height * 3,
+        );
+
+        // Compute offset to center the laid-out graph within the canvas
+        var minX = double.infinity, minY = double.infinity;
+        var maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+        for (final n in widget.layout) {
+          minX = minX < n.position.dx - n.radius
+              ? minX
+              : n.position.dx - n.radius;
+          minY = minY < n.position.dy - n.radius
+              ? minY
+              : n.position.dy - n.radius;
+          maxX = maxX > n.position.dx + n.radius
+              ? maxX
+              : n.position.dx + n.radius;
+          maxY = maxY > n.position.dy + n.radius
+              ? maxY
+              : n.position.dy + n.radius;
+        }
+        final graphW = maxX - minX;
+        final graphH = maxY - minY;
+        final offsetX = (canvasSize.width - graphW) / 2 - minX;
+        final offsetY = (canvasSize.height - graphH) / 2 - minY;
+        final centerOffset = Offset(offsetX, offsetY);
+
+        final centeredNodes = [
+          for (final n in widget.layout)
+            PositionedNode(
+              node: n.node,
+              position: n.position + centerOffset,
+              radius: n.radius,
             ),
-            if (_hoveredNodeId != null && _hoverPosition != null)
-              _buildTooltip(),
-          ],
-        ),
-      ),
+        ];
+
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _centerOnGraph(viewportSize, canvasSize);
+        });
+
+        return MouseRegion(
+          onHover: _handleHover,
+          onExit: (_) => setState(() {
+            _hoveredNodeId = null;
+            _hoverPosition = null;
+          }),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              InteractiveViewer(
+                transformationController: _transformController,
+                boundaryMargin: const EdgeInsets.all(double.infinity),
+                minScale: 0.3,
+                maxScale: 3.0,
+                constrained: false,
+                child: CustomPaint(
+                  painter: GraphPainter(
+                    nodes: centeredNodes,
+                    edges: widget.graph.edges,
+                    hoveredNodeId: _hoveredNodeId,
+                  ),
+                  size: canvasSize,
+                ),
+              ),
+              if (_hoveredNodeId != null && _hoverPosition != null)
+                _buildTooltip(),
+            ],
+          ),
+        );
+      },
     );
   }
 
