@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -37,18 +37,34 @@ void main() async {
   runApp(const ThreadApp());
 }
 
-class ThreadApp extends StatefulWidget {
+class ThreadApp extends StatelessWidget {
   const ThreadApp({super.key});
 
   @override
-  State<ThreadApp> createState() => _ThreadAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Thread',
+      debugShowCheckedModeBanner: false,
+      theme: threadTheme(),
+      home: const _ThreadHome(),
+    );
+  }
 }
 
-class _ThreadAppState extends State<ThreadApp> {
+class _ThreadHome extends StatefulWidget {
+  const _ThreadHome();
+
+  @override
+  State<_ThreadHome> createState() => _ThreadHomeState();
+}
+
+class _ThreadHomeState extends State<_ThreadHome> {
   double _zoom = 1.0;
   List<WorkspaceInfo> _workspaces = [];
   WorkspaceInfo? _activeWorkspace;
   WorkspaceStats? _stats;
+  bool _showStats = false;
+  bool _showPicker = false;
   final _db = DbConnection();
   String _backgroundImage = _defaultBackgroundImage;
   late final List<String> _availableBackgrounds;
@@ -60,6 +76,8 @@ class _ThreadAppState extends State<ThreadApp> {
     _workspaces = scanWorkspaces();
     if (_workspaces.length == 1) {
       _selectWorkspace(_workspaces.first);
+    } else if (_workspaces.isNotEmpty) {
+      _showPicker = true;
     }
   }
 
@@ -85,7 +103,17 @@ class _ThreadAppState extends State<ThreadApp> {
     setState(() {
       _activeWorkspace = ws;
       _stats = _db.queryStats(ws.name);
+      _showStats = true;
+      _showPicker = false;
     });
+  }
+
+  void _closeStats() {
+    setState(() => _showStats = false);
+  }
+
+  void _closePicker() {
+    setState(() => _showPicker = false);
   }
 
   void _refresh() {
@@ -106,34 +134,34 @@ class _ThreadAppState extends State<ThreadApp> {
     });
   }
 
-  void _showContextMenu(BuildContext context, Offset position) {
+  void _openWorkspacePicker() {
+    setState(() {
+      _showPicker = true;
+    });
+  }
+
+  void _showContextMenu(Offset position) {
     final items = <PopupMenuEntry<String>>[];
 
-    for (final ws in _workspaces) {
-      final isActive = ws.dbPath == _activeWorkspace?.dbPath;
-      items.add(
-        PopupMenuItem<String>(
-          value: 'ws:${ws.dbPath}',
-          child: Row(
-            children: [
-              Icon(
-                isActive ? Icons.radio_button_checked : Icons.radio_button_off,
-                size: 18,
-                color: Colors.white.withValues(alpha: isActive ? 0.9 : 0.5),
-              ),
-              const SizedBox(width: 12),
-              Text(ws.name),
-            ],
-          ),
+    items.add(
+      PopupMenuItem<String>(
+        value: 'workspaces',
+        child: Row(
+          children: [
+            Icon(
+              Icons.folder_outlined,
+              size: 20,
+              color: Colors.white.withValues(alpha: 0.7),
+            ),
+            const SizedBox(width: 12),
+            const Text('Open workspace'),
+          ],
         ),
-      );
-    }
-
-    if (_workspaces.isNotEmpty) {
-      items.add(const PopupMenuDivider());
-    }
+      ),
+    );
 
     if (_availableBackgrounds.length > 1) {
+      items.add(const PopupMenuDivider());
       for (final bg in _availableBackgrounds) {
         final name = bg.split('/').last.split('.').first;
         final isActive = bg == _backgroundImage;
@@ -154,9 +182,9 @@ class _ThreadAppState extends State<ThreadApp> {
           ),
         );
       }
-      items.add(const PopupMenuDivider());
     }
 
+    items.add(const PopupMenuDivider());
     items.add(
       PopupMenuItem<String>(
         value: 'refresh',
@@ -185,10 +213,8 @@ class _ThreadAppState extends State<ThreadApp> {
       items: items,
     ).then((value) {
       if (value == null) return;
-      if (value.startsWith('ws:')) {
-        final path = value.substring(3);
-        final ws = _workspaces.firstWhere((w) => w.dbPath == path);
-        _selectWorkspace(ws);
+      if (value == 'workspaces') {
+        _openWorkspacePicker();
       } else if (value.startsWith('bg:')) {
         setState(() => _backgroundImage = value.substring(3));
       } else if (value == 'refresh') {
@@ -199,90 +225,86 @@ class _ThreadAppState extends State<ThreadApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Thread',
-      debugShowCheckedModeBanner: false,
-      theme: threadTheme(),
-      home: Shortcuts(
-        shortcuts: {
-          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.equal):
-              const _ZoomInIntent(),
-          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.minus):
-              const _ZoomOutIntent(),
-          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyR):
-              const _RefreshIntent(),
-        },
-        child: Actions(
-          actions: {
-            _ZoomInIntent: CallbackAction<_ZoomInIntent>(
-              onInvoke: (_) => _zoomIn(),
-            ),
-            _ZoomOutIntent: CallbackAction<_ZoomOutIntent>(
-              onInvoke: (_) => _zoomOut(),
-            ),
-            _RefreshIntent: CallbackAction<_RefreshIntent>(
-              onInvoke: (_) => _refresh(),
-            ),
-          },
-          child: Focus(
-            autofocus: true,
-            child: Scaffold(body: _buildBody(context)),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBody(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final centerX = (size.width - 400) / 2;
     final centerY = (size.height - 300) / 2;
 
-    return Listener(
-      onPointerDown: (event) {
-        if (event.buttons == kSecondaryMouseButton) {
-          _showContextMenu(context, event.position);
-        }
+    return Shortcuts(
+      shortcuts: {
+        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.equal):
+            const _ZoomInIntent(),
+        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.minus):
+            const _ZoomOutIntent(),
+        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyR):
+            const _RefreshIntent(),
       },
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(_backgroundImage, fit: BoxFit.cover),
-          MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(_zoom)),
-            child: Stack(
-              children: [
-                if (_stats != null)
-                  DraggableCard(
-                    key: ValueKey('stats-${_activeWorkspace!.name}'),
-                    initialOffset: Offset(centerX, centerY),
-                    child: WorkspaceStatsView(stats: _stats!),
-                  ),
-                if (_stats == null && _workspaces.isNotEmpty)
-                  DraggableCard(
-                    key: const ValueKey('picker'),
-                    initialOffset: Offset(centerX, centerY),
-                    child: WorkspacePicker(
-                      workspaces: _workspaces,
-                      onSelect: _selectWorkspace,
+      child: Actions(
+        actions: {
+          _ZoomInIntent: CallbackAction<_ZoomInIntent>(
+            onInvoke: (_) => _zoomIn(),
+          ),
+          _ZoomOutIntent: CallbackAction<_ZoomOutIntent>(
+            onInvoke: (_) => _zoomOut(),
+          ),
+          _RefreshIntent: CallbackAction<_RefreshIntent>(
+            onInvoke: (_) => _refresh(),
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            body: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                if (event.buttons == kSecondaryMouseButton) {
+                  _showContextMenu(event.position);
+                }
+              },
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(_backgroundImage, fit: BoxFit.cover),
+                  MediaQuery(
+                    data: MediaQuery.of(
+                      context,
+                    ).copyWith(textScaler: TextScaler.linear(_zoom)),
+                    child: Stack(
+                      children: [
+                        if (_showStats && _stats != null)
+                          DraggableCard(
+                            key: ValueKey('stats-${_activeWorkspace!.name}'),
+                            initialOffset: Offset(centerX, centerY),
+                            onClose: _closeStats,
+                            child: WorkspaceStatsView(stats: _stats!),
+                          ),
+                        if (_showPicker && _workspaces.isNotEmpty)
+                          DraggableCard(
+                            key: const ValueKey('picker'),
+                            initialOffset: Offset(centerX, centerY),
+                            onClose: _closePicker,
+                            child: WorkspacePicker(
+                              workspaces: _workspaces,
+                              onSelect: _selectWorkspace,
+                            ),
+                          ),
+                        if (_workspaces.isEmpty)
+                          Center(
+                            child: Text(
+                              'No sutra workspaces found in ~/.sutra/',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.6),
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                if (_workspaces.isEmpty)
-                  Center(
-                    child: Text(
-                      'No sutra workspaces found in ~/.sutra/',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.6),
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
